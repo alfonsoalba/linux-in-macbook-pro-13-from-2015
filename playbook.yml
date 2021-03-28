@@ -19,7 +19,7 @@
         - evolution  
         - flatpak
         - gnome-tweaks
-        #- macfanctld # to turn on the fans when the temperature raises
+        - macfanctld # to turn on the fans when the temperature raises
         - mesa-utils # for testing our 3D graphics driver
         - terminator # for improved terminal experience
         - terminology # for another improved terminal experience
