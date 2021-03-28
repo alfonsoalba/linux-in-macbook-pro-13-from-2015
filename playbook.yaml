@@ -1,0 +1,283 @@
+- hosts: 127.0.0.1
+  connection: local
+  become: true
+  vars:
+    recompile_bcwc_pcie: false
+    docker_users:
+      - aalba
+    docker_compose_version: 1.28.2
+  tasks:
+  - name: Install several packages
+    package:
+      name: 
+        - htop
+        - vim
+        - git # well, nothing to say here...
+        - geary
+        - gnome-calendar
+        - gnome-contacts
+        - evolution  
+        - flatpak
+        - gnome-tweaks
+        #- macfanctld # to turn on the fans when the temperature raises
+        - mesa-utils # for testing our 3D graphics driver
+        - terminator # for improved terminal experience
+        - terminology # for another improved terminal experience
+        - hub # to have access to github functionality from the command line
+        - zsh
+      state: present
+    tags:
+      - software 
+  - name: Install snap classic applications
+    community.general.snap:
+      name:
+      - code
+      - slack
+      classic: yes  
+    tags:
+      - software 
+  
+  - name: Install snap applications from the beta channel
+    community.general.snap:
+      name:
+      - authy
+      channel: latest/beta
+    tags:
+      - software 
+
+  - name: Install snap applications
+    community.general.snap:
+      name:
+      - bitwarden
+      - bw  
+      - brave
+      - authy
+      - p3x-onenote
+      - libreoffice
+    tags:
+      - software 
+  - name: Add the flathub flatpak repository remote to the user installation
+    community.general.flatpak_remote:
+      name: flathub
+      state: present
+      flatpakrepo_url: https://flathub.org/repo/flathub.flatpakrepo
+      method: user
+    become: false  
+    tags:
+      - software 
+
+  - name: Install the toggl flatpak
+    community.general.flatpak:
+      name: com.toggl.TogglDesktop  
+      state: present
+      method: user
+      remote: flathub
+    become: false  
+    tags:
+      - software 
+
+  # Instructions to install facetimeHD webcam drivers
+  # https://askubuntu.com/questions/990218/camera-not-working-on-macbook-pro/1215628#1215628
+  - name: Install packages needed to compile the FacetimeHD drivers
+    package:
+      name: 
+        - curl
+        - xz-utils
+        - cpio
+        - kmod 
+        - libssl-dev 
+        - checkinstall
+      state: present
+    
+  - name: facetimehd-firmware | Clone facetime.firmware repository
+    git:
+      repo: https://github.com/patjak/facetimehd-firmware.git
+      dest: /usr/local/src/facetimehd-firmware
+  - name: facetimehd-firmware | run make
+    ansible.builtin.shell: make
+    args:
+      chdir: /usr/local/src/facetimehd-firmware
+  - name: facetimehd-firmware | run make install
+    ansible.builtin.shell: make install
+    args:
+      chdir: /usr/local/src/facetimehd-firmware
+  - name: bcwc_pcie | Clone the bcwc_pcie repository 
+    git:
+      repo: https://github.com/patjak/bcwc_pcie.git
+      dest: /usr/local/src/bcwc_pcie
+ 
+  - debug:
+      msg: "{{ recompile_bcwc_pcie }}" 
+  - name: bcwc_pcie | run make clean
+    ansible.builtin.shell: make clean
+    args:
+      chdir: /usr/local/src/bcwc_pcie
+    when:
+      - recompile_bcwc_pcie is defined
+      - recompile_bcwc_pcie
+ 
+  - name: bcwc_pcie | run make
+    ansible.builtin.shell: make
+    args:
+      chdir: /usr/local/src/bcwc_pcie
+
+  - name: bcwc_pcie | run make install and other kernel commands
+    ansible.builtin.shell: |
+      make install
+      depmod
+      modprobe -r bdc_pci
+      modprobe facetimehd
+    args:
+      chdir: /usr/local/src/bcwc_pcie
+
+
+  - name: bcwc_pcie | add factime to /etc/modules
+    ansible.builtin.lineinfile:
+      path: /etc/modules
+      regexp: '^facetimehd'
+      line: facetimehd
+
+  - name: p161 | Install virtualenv
+    pip:
+      name:
+        - virtualenv
+
+  - name: p161 | Install ansible 2.9 in a virtualenv
+    pip:
+      name:
+        - ansible>2.9.0,<2.10.0
+      virtualenv: $HOME/ansible2.9/
+    become: false
+  
+  - name: p161 | Install ansible 2.9 and other dependencies insithe the virtualenv
+    pip:
+      name:
+        - ansible>2.9.0,<2.10.0
+        - setuptools
+        - apache-libcloud 
+        - google-auth
+        - pycrypto 
+        - requests 
+        - molecule>2.0.0,<3.0.0
+        - docker
+      virtualenv: $HOME/ansible2.9/
+    become: false
+  - name: p161 | Install apt packages for google-cloud-sdk
+    package:
+      name:
+      - apt-transport-https 
+      - ca-certificates 
+      - gnupg  
+  - name: p161 | Add key for the debian repository containing the google-cloud-sdk pacakges
+    shell: curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | apt-key --keyring /usr/share/keyrings/cloud.google.gpg add -
+  
+  - name: p161 | Add google cloud sdk repository
+    apt_repository: 
+      repo: deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main
+      state: present 
+      filename: google-cloud-sdk 
+      update_cache: yes
+  
+  - name: p161 | Install google-cloud-sdk
+    package:
+      name:
+      - google-cloud-sdk
+        
+
+  - name: Docker | Make sure old packages are not installed
+    package:
+      name: 
+        - docker
+        - docker-engine 
+        - docker.io 
+        - containerd
+        - runc
+      state: absent
+    tags:
+      - docker
+  - name: Docker | Add dependencies
+    package:
+      name:
+        - apt-transport-https
+        - ca-certificates
+        - curl
+        - gnupg-agent
+        - software-properties-common
+    tags:
+      - docker
+
+  - name: Docker | Add GPG Key for repository
+    ansible.builtin.apt_key:
+      id: 9DC858229FC7DD38854AE2D88D81803C0EBFCD88
+      url: https://download.docker.com/linux/ubuntu/gpg
+      state: present
+    tags:
+      - docker
+
+  - name: Docker | Register distribution name
+    shell: lsb_release -cs
+    register: ubuntu_distribution_name   
+    tags:
+      - docker
+
+  - name: Docker | Add repository
+    ansible.builtin.apt_repository:
+      repo: "deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ubuntu_distribution_name.stdout }}  stable" 
+      state: present
+      update_cache: yes
+    tags:
+      - docker
+
+  - name: Docker | Install docker
+    package:
+      name:
+        - docker-ce
+        - docker-ce-cli
+        - containerd.io
+      state: present
+    tags:
+      - docker
+
+  - name: Docker | Add users to docker group
+    user:
+      name: "{{item}}"
+      groups: docker
+      append: true
+    with_items: "{{ docker_users }}"
+    tags:
+      - docker
+
+  - name: docker-compose | Download docker-compose
+    get_url:
+      url: "https://github.com/docker/compose/releases/download/{{ docker_compose_version }}/docker-compose-Linux-{{ ansible_facts['architecture'] }}"
+      dest: /usr/local/bin/docker-compose
+      mode: "0777"
+    tags:
+      - docker-compose
+  - name: docker-compose | Add bash completion
+    get_url:
+      url: https://raw.githubusercontent.com/docker/compose/1.28.2/contrib/completion/bash/docker-compose
+      dest: /etc/bash_completion.d/docker-compose
+    tags:
+      docker-compose
+
+  - name: obs | Install dependencies
+    package:
+      name: ffmpeg
+      state: present
+    tags:
+      - software 
+
+  - name: obs | Add respository
+    ansible.builtin.apt_repository:
+      repo: 'ppa:obsproject/obs-studio'
+    tags:
+      - software 
+
+  - name: obs | install OBS
+    package:
+      name:
+        - obs-studio
+      state: present
+    tags:
+      - software 
